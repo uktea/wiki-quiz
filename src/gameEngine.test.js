@@ -161,9 +161,7 @@ test('API selects readable popular articles and reverse mode requires a Wikimedi
   const original = globalThis.fetch;
   const popular = { ...article, extract: article.extract.repeat(10), pageviews: { a: 100, b: null } };
   const pictured = { ...popular, title: '大阪', thumbnail: { source: 'https://upload.wikimedia.org/test.jpg' }, pageviews: { a: 50 } };
-  globalThis.fetch = async url => ({ ok: true, json: async () => url.includes('list=random')
-    ? { query: { random: [{ title: '東京' }, { title: '大阪' }] } }
-    : { query: { pages: { 1: popular, 2: pictured } } } });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ query: { pages: { 1: popular, 2: pictured } } }) });
   try {
     const settings = { fetchAttempts: 1, fetchBatchSize: 2 };
     assert.equal((await fetchRandomArticle(settings)).article.title, '東京');
