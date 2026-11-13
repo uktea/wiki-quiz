@@ -51,24 +51,31 @@ export async function fetchRandomArticle(settings, { signal, isReverse = false }
   const attempts = Math.min(10, Math.max(1, settings.fetchAttempts || 3));
   const batchSize = Math.min(50, Math.max(1, settings.fetchBatchSize || 20));
   for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      const random = await queryWikipedia({ list: 'random', rnnamespace: '0', rnlimit: String(batchSize) }, signal);
-      const details = await queryWikipedia({
-        prop: 'extracts|pageviews|pageimages|pageprops', exintro: '1', pithumbsize: '500',
-        titles: random.random.map(page => page.title).join('|'),
-      }, signal);
-      for (const page of Object.values(details.pages ?? {})) {
-        if (!page.extract || plainText(page.extract).length < 80 || page.pageprops?.disambiguation !== undefined) continue;
-        const thumbnail = page.thumbnail?.source?.startsWith('https://upload.wikimedia.org/') ? page.thumbnail.source : null;
-        if (isReverse && !thumbnail) continue;
-        const pageviews = Object.values(page.pageviews ?? {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
-        if (!best || pageviews > best.pageviews) best = { title: page.title, extract: page.extract, pageviews, thumbnail };
+    // TextExtracts returns at most 20 introductions per request. Sampling in
+    // chunks keeps every candidate eligible, including batch sizes above 20.
+    for (let offset = 0; offset < batchSize; offset += 20) {
+      signal?.throwIfAborted();
+      const count = String(Math.min(20, batchSize - offset));
+      try {
+        const details = await queryWikipedia({
+          generator: 'random', grnnamespace: '0', grnfilterredir: 'nonredirects', grnlimit: count,
+          prop: 'extracts|pageviews|pageimages|pageprops', exintro: '1', exlimit: count,
+          piprop: 'thumbnail', pithumbsize: '500', ppprop: 'disambiguation',
+        }, signal);
+        for (const page of Object.values(details.pages ?? {})) {
+          if (!page.extract || plainText(page.extract).length < 80 || page.pageprops?.disambiguation !== undefined) continue;
+          const thumbnail = page.thumbnail?.source?.startsWith('https://upload.wikimedia.org/') ? page.thumbnail.source : null;
+          if (isReverse && !thumbnail) continue;
+          const pageviews = Object.values(page.pageviews ?? {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+          if (!best || pageviews > best.pageviews) best = { title: page.title, extract: page.extract, pageviews, thumbnail };
+        }
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        lastError = error;
       }
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      lastError = error;
     }
   }
+  signal?.throwIfAborted();
   if (!best) throw lastError ?? new Error('表示できる記事が見つかりませんでした。');
   return { article: best, ...maskText(best.extract, best.title) };
 }
