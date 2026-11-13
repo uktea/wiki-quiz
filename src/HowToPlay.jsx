@@ -1,10 +1,6 @@
-// import { Link } from 'react-router-dom'; の行を以下に置き換え
-import React from 'react';
-import { useNavigate } from 'react-router-dom'; // Linkの代わりにuseNavigateをインポート
-import './App.css';
+import { Link } from 'react-router-dom';
 
 function HowToPlay() {
-  const navigate = useNavigate(); // ナビゲート関数を取得
   return (
     <div className="page-container">
       <h1>遊び方</h1>
@@ -29,7 +25,7 @@ function HowToPlay() {
           <li><b>連続正解ボーナス:</b> (連続正解数 × 5) 点</li>
         </ul>
       </div>
-      <button onClick={() => navigate(-1)} className="menu-button back-button">戻る</button>
+      <Link to="/" className="back-link">戻る</Link>
     </div>
   );
 }

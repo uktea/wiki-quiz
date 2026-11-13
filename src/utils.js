@@ -1,90 +1,74 @@
-// ▼▼▼ 既存の utils.js の中身を、これに全て置き換えてください ▼▼▼
+export const normalizeText = (text = '') => text.normalize('NFKC').replace(/\s/g, '').toLowerCase();
 
-export const normalizeText = (text) => {
-  if (!text) return '';
-  return text
-    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
-    // eslint-disable-next-line no-irregular-whitespace
-    .replace(/[\s　]/g, "");
+export const isCorrectAnswer = (guess, title) => {
+  const answer = normalizeText(guess);
+  return Boolean(answer) && [title, title.replace(/\s*[（(][^()（）]*[)）]$/, '')]
+    .some(candidate => normalizeText(candidate) === answer);
 };
 
-export const maskText = (text, title) => {
-  let masked = text;
-  const unmaskable = [];
-  const replacer = (match) => '●'.repeat(match.length);
-  const captureReplacer = (match, content) => {
-    if (content && title && content.toLowerCase() !== title.toLowerCase()) {
-      unmaskable.push(content);
-    }
-    return `<b>${'●'.repeat(content.length)}</b>`;
-  };
-  masked = masked.replace(/<b>(.*?)<\/b>/g, captureReplacer);
-  masked = masked.replace(/（(.*?)）/g, (match, content) => {
-    if (content) unmaskable.push(content);
-    return `（${'●'.repeat(content.length)}）`;
-  });
-  masked = masked.replace(/\((.*?)\)/g, (match, content) => {
-    if (content) unmaskable.push(content);
-    return `(${'●'.repeat(content.length)})`;
-  });
-  const titleRegex = new RegExp(title, 'gi');
-  masked = masked.replace(titleRegex, replacer);
-  masked = masked.replace(/<[^>]+>/g, '');
-  return { maskedText: masked, unmaskableWords: unmaskable };
-};
+export function plainText(html) {
+  return html.replace(/<\/(?:p|h[1-6])>/gi, '\n\n').replace(/<[^>]*>/g, '').replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (match, entity) => {
+    const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+    if (entity[0] !== '#') return named[entity.toLowerCase()] ?? match;
+    const code = entity[1].toLowerCase() === 'x' ? parseInt(entity.slice(2), 16) : Number(entity.slice(1));
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+  }).trim();
+}
 
-export const fetchRandomArticle = async (settings) => {
-  const url = "https://ja.wikipedia.org/w/api.php";
-  const commonParams = "&format=json&origin=*";
-  
-  let bestArticle = null;
-  let maxViews = -1;
+export function maskText(text, title) {
+  const words = [];
+  const mask = value => '●'.repeat([...value].length);
+  let masked = text.replace(/<(b|strong)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_, tag, content) => {
+    const word = plainText(content);
+    if (word && !isCorrectAnswer(word, title) && !normalizeText(word).includes(normalizeText(title))) words.push(word);
+    return mask(word);
+  });
+  masked = plainText(masked).replace(/（([^（）]*)）|\(([^()]*)\)/g, (_, full, half) => {
+    const word = full ?? half;
+    if (word && !isCorrectAnswer(word, title) && !normalizeText(word).includes(normalizeText(title))) words.push(word);
+    return full !== undefined ? '（' + mask(word) + '）' : '(' + mask(word) + ')';
+  });
+  for (const candidate of new Set([title, title.replace(/\s*[（(][^()（）]*[)）]$/, '')])) {
+    if (!candidate) continue;
+    const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    masked = masked.replace(new RegExp(escaped, 'gi'), mask);
+  }
+  return { maskedText: masked, unmaskableWords: [...new Set(words)] };
+}
 
-  for (let i = 0; i < settings.fetchAttempts; i++) {
+async function queryWikipedia(params, signal) {
+  const query = new URLSearchParams({ action: 'query', format: 'json', origin: '*', ...params });
+  const response = await fetch('https://ja.wikipedia.org/w/api.php?' + query, { signal });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  const data = await response.json();
+  if (data.error || !data.query) throw new Error('記事を取得できませんでした。');
+  return data.query;
+}
+
+export async function fetchRandomArticle(settings, { signal, isReverse = false } = {}) {
+  let best = null;
+  let lastError;
+  const attempts = Math.min(10, Math.max(1, settings.fetchAttempts || 3));
+  const batchSize = Math.min(50, Math.max(1, settings.fetchBatchSize || 20));
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const randomListParams = `?action=query&list=random&rnnamespace=0&rnlimit=${settings.fetchBatchSize}${commonParams}`;
-      const randomResponse = await fetch(url + randomListParams);
-      const randomData = await randomResponse.json();
-      const titles = randomData.query.random.map(p => p.title).join('|');
-      
-      const detailsParams = `?action=query&prop=extracts|pageviews|pageimages&pithumbsize=300&titles=${encodeURIComponent(titles)}${commonParams}`;
-      const detailsResponse = await fetch(url + detailsParams);
-      const detailsData = await detailsResponse.json();
-
-      if (!detailsData.query || !detailsData.query.pages) continue;
-
-      const pages = Object.values(detailsData.query.pages);
-      for (const page of pages) {
-        if (!page.extract) continue;
-        const pageviews = page.pageviews ? Object.values(page.pageviews).reduce((a, b) => a + b, 0) : 0;
-        if (pageviews > maxViews) {
-          maxViews = pageviews;
-          bestArticle = page;
-        }
+      const random = await queryWikipedia({ list: 'random', rnnamespace: '0', rnlimit: String(batchSize) }, signal);
+      const details = await queryWikipedia({
+        prop: 'extracts|pageviews|pageimages|pageprops', exintro: '1', pithumbsize: '500',
+        titles: random.random.map(page => page.title).join('|'),
+      }, signal);
+      for (const page of Object.values(details.pages ?? {})) {
+        if (!page.extract || plainText(page.extract).length < 80 || page.pageprops?.disambiguation !== undefined) continue;
+        const thumbnail = page.thumbnail?.source?.startsWith('https://upload.wikimedia.org/') ? page.thumbnail.source : null;
+        if (isReverse && !thumbnail) continue;
+        const pageviews = Object.values(page.pageviews ?? {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+        if (!best || pageviews > best.pageviews) best = { title: page.title, extract: page.extract, pageviews, thumbnail };
       }
     } catch (error) {
-      console.error(`APIリクエスト中にエラー (試行 ${i + 1}回目):`, error);
+      if (signal?.aborted) throw error;
+      lastError = error;
     }
   }
-
-  if (bestArticle) {
-    const { maskedText, unmaskableWords } = maskText(bestArticle.extract, bestArticle.title);
-    const pageviews = bestArticle.pageviews ? Object.values(bestArticle.pageviews).reduce((a, b) => a + b, 0) : 0;
-    // Validate thumbnail URL is from Wikipedia domain
-    let thumbnail = null;
-    if (bestArticle.thumbnail && bestArticle.thumbnail.source) {
-      const thumbnailUrl = bestArticle.thumbnail.source;
-      if (thumbnailUrl.startsWith('https://upload.wikimedia.org/')) {
-        thumbnail = thumbnailUrl;
-      }
-    }
-    return {
-      article: { title: bestArticle.title, extract: bestArticle.extract, pageviews, thumbnail },
-      maskedText,
-      unmaskableWords
-    };
-  }
-  
-  console.error("表示できる記事が見つかりませんでした。");
-  return null;
-};
+  if (!best) throw lastError ?? new Error('表示できる記事が見つかりませんでした。');
+  return { article: best, ...maskText(best.extract, best.title) };
+}

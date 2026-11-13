@@ -1,30 +1,13 @@
-import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import './App.css';
+import { Link } from 'react-router-dom';
+import { gameModes } from './gameConfig';
 
-function GameModeSelection() {
-  const navigate = useNavigate();
-
-  return (
-    <div className="page-container">
-      <h1>モード選択</h1>
-      <div className="title-menu">
-        <Link to="/prepare/normal" className="menu-button">
-          ノーマル
-        </Link>
-        <Link to="/prepare/timeattack" className="menu-button">
-          タイムアタック
-        </Link>
-        <Link to="/prepare/survival" className="menu-button">
-          サバイバル
-        </Link>
-        <Link to="/prepare/practice" className="menu-button">
-        練習
-        </Link>
-      </div>
-      <button className="menu-button back-button" onClick={() => navigate('/')}>戻る</button>
-    </div>
-  );
+export default function GameModeSelection() {
+  return <section>
+    <h1>モード選択</h1>
+    <nav className="title-menu" aria-label="ゲームモード">
+      {Object.entries(gameModes).map(([mode, { name }]) =>
+        <Link key={mode} to={'/prepare/' + mode} className="menu-button">{name}</Link>)}
+    </nav>
+    <Link className="back-link" to="/">戻る</Link>
+  </section>;
 }
-
-export default GameModeSelection;
