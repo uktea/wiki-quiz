@@ -43,4 +43,8 @@ npm run preview
 
 `vite.config.js` の `base` は `/wiki-quiz/` です。ルーターもこの値を使用します。
 
-`npm run deploy` でビルドして GitHub Pages の配信用ブランチへ公開します。BrowserRouter を使用するため、ホスト側にフォールバックがない場合、ゲーム画面などの URL の直接読み込みは 404 になります。GitHub Pages ではトップページから移動してください。
+`main` への push で `.github/workflows/deploy.yml` がテスト・静的検査・ビルドを実行し、`dist` を GitHub Pages に公開します。Pages の Source は GitHub Actions を使用します。公開 URL は https://uktea.github.io/wiki-quiz/ です。
+
+`npm run deploy` は従来の `gh-pages` ブランチへ出力する手動操作として残しています。現在の公開フローは `main` の GitHub Actions です。
+
+BrowserRouter を使用するため、ゲーム画面などの URL の直接読み込みは 404 になります。GitHub Pages ではトップページから移動してください。
